@@ -1,6 +1,7 @@
 import base64
 import os
 import re
+from random import randint
 
 import oauth2client
 from apiclient import errors
@@ -183,11 +184,9 @@ for i in data_list:
     else:
         i[len(data_list[0]) - 1] = False
 
-print data_list[0]
-
 for j in xrange(0, len(idList)):
     idDict = idList[j]
-    print 'Reading email with id', idDict['id']
+    # print 'Reading email with id', idDict['id']
     try:
         msgDict = get_message(service, 'me', idDict['id'])
         headersList = msgDict['payload']['headers']
@@ -208,7 +207,7 @@ for j in xrange(0, len(idList)):
                         msgDict['payload']['parts'][0]['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
             body += msgDict['payload']['parts'][0]['parts'][0]['parts'][0]['body']['data']
         else:
-            print 'error'
+            print 'Error in id: ', idDict['id']
 
         body = str(base64.b64decode(str(body).replace('-', '+').replace('_', '/')))
         body = body.decode('utf-8')
@@ -275,9 +274,54 @@ for j in xrange(0, len(idList)):
             else:
                 attributeValueList[i] = 5
 
-        print attributeValueList
+        probability_true = 1.0
+        probability_false = 1.0
+        prob_true = []
+        prob_false = []
+        count_true = 0.0
+        count_false = 0.0
+        total = float(len(data_list))
+
+        for i in data_list:
+            if i[-1]:
+                count_true += 1
+            else:
+                count_false += 1
+
+        for i in xrange(0, len(data_list[0]) - 1):
+            count = 0.0
+            for k in data_list:
+                if k[i] == attributeValueList[i] and k[-1]:
+                    count += 1
+            probability = count / count_true
+            prob_true.append(probability)
+
+        prob_true.append(count_true / total)
+
+        for i in xrange(0, len(data_list[0]) - 1):
+            count = 0.0
+            for k in data_list:
+                if k[i] == attributeValueList[i] and not k[-1]:
+                    count += 1
+            probability = count / count_false
+            prob_false.append(probability)
+
+        prob_false.append(count_false / total)
+
+        for i in prob_true:
+            probability_true *= i
+
+        for i in prob_false:
+            probability_false *= i
+
+        if probability_true > probability_false:
+            print idDict['id'], 'spam'
+        elif probability_true == probability_false:
+            random_no = randint(0, 1)
+            if random_no == 1:
+                print idDict['id'], 'spam'
 
     except Exception as e:
         print 'Error in id %s' % idList[j]['id']
-        print e
+        print 'Error Description: ', e
         pass
