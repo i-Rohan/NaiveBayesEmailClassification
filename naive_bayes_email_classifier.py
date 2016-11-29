@@ -9,36 +9,47 @@ from apiclient.discovery import build
 from httplib2 import Http
 from oauth2client import client
 from oauth2client import tools
+from pymongo import MongoClient
 
 try:
-    # noinspection PyUnresolvedReferences
     import argparse
 
     flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
 except ImportError:
     flags = None
 
+###############################################################################
+# CONSTANTS
+# For use in gmail API
+###############################################################################
 SCOPES = 'https://mail.google.com/'
 CLIENT_SECRET_FILE = 'client_secret.json'
 APPLICATION_NAME = 'Naive Bayes Email Class'
 
+###############################################################################
+# CONSTANTS
+# For use as dictionary keys in dataset
+###############################################################################
+attributeList = []
 
+
+###############################################################################
+# get_credentials
+#
+# Gets valid user credentials from storage.
+#
+#     If nothing has been stored, or if the stored credentials are invalid,
+#     the OAuth2 flow is completed to obtain the new credentials.
+#
+#     Returns:
+#         Credentials, the obtained credential.
+###############################################################################
 def get_credentials():
-    """Gets valid user credentials from storage.
-
-    If nothing has been stored, or if the stored credentials are invalid,
-    the OAuth2 flow is completed to obtain the new credentials.
-
-    Returns:
-        Credentials, the obtained credential.
-    """
     home_dir = os.path.expanduser('~')
     credential_dir = os.path.join(home_dir, '.credentials')
     if not os.path.exists(credential_dir):
         os.makedirs(credential_dir)
-    credential_path = os.path.join(credential_dir,
-                                   'gmail-quickstart.json')
-
+    credential_path = os.path.join(credential_dir, 'gmail-quickstart.json')
     store = oauth2client.file.Storage(credential_path)
     credentials1 = store.get()
     if not credentials1 or credentials1.invalid:
@@ -52,24 +63,23 @@ def get_credentials():
     return credentials1
 
 
-credentials = get_credentials()
-service = build('gmail', 'v1', http=credentials.authorize(Http()))
-
-
+###############################################################################
+# list_message
+#
+# List all Messages of the user's mailbox matching the query.
+#
+#     Args:
+#       service1: Authorized Gmail API service instance.
+#       user_id: User's email address. The special value "me"
+#       can be used to indicate the authenticated user.
+#       Eg.- 'from:user@some_domain.com' for Messages from a particular sender.
+#
+#     Returns:
+#       List of Messages that match the criteria of the query. Note that the
+#       returned list contains Message IDs, you must use get with the
+#       appropriate ID to get the details of a Message.
+###############################################################################
 def list_messages(service1, user_id):
-    """List all Messages of the user's mailbox matching the query.
-
-    Args:
-      service1: Authorized Gmail API service instance.
-      user_id: User's email address. The special value "me"
-      can be used to indicate the authenticated user.
-      Eg.- 'from:user@some_domain.com' for Messages from a particular sender.
-
-    Returns:
-      List of Messages that match the criteria of the query. Note that the
-      returned list contains Message IDs, you must use get with the
-      appropriate ID to get the details of a Message.
-    """
     try:
         response = service1.users().messages().list(userId=user_id, maxResults=10, includeSpamTrash=True).execute()
         messages = []
@@ -87,18 +97,21 @@ def list_messages(service1, user_id):
         print 'An error occurred: %s' % error1
 
 
+###############################################################################
+# get_message
+#
+# Get a Message with given ID.
+#
+#     Args:
+#       service1: Authorized Gmail API service instance.
+#       user_id: User's email address. The special value "me"
+#       can be used to indicate the authenticated user.
+#       msg_id: The ID of the Message required.
+#
+#     Returns:
+#       A Message.
+###############################################################################
 def get_message(service1, user_id, msg_id):
-    """Get a Message with given ID.
-
-    Args:
-      service1: Authorized Gmail API service instance.
-      user_id: User's email address. The special value "me"
-      can be used to indicate the authenticated user.
-      msg_id: The ID of the Message required.
-
-    Returns:
-      A Message.
-    """
     try:
         message = service1.users().messages().get(userId=user_id, id=msg_id, format='full').execute()
         return message
@@ -106,222 +119,292 @@ def get_message(service1, user_id, msg_id):
         print 'An error occurred: %s' % error1
 
 
-def read_space_separated(input_file):
-    for line in input_file:
-        line_list = []
-        for token in line.split():
-            line_list.append(float(token))
-        data_list.append(line_list)
+###############################################################################
+# read_dataset
+#
+# Reads data from file and stores in a list
+# parameters:
+#     - collection_name: name of the data file containing the training data records
+#
+# returns: trainingSet: a list of training records (each record is a dict,
+#                       that contains attribute values for that record.)
+###############################################################################
+def read_dataset(collection_name):
+    dataset = []
+
+    mongo_client = MongoClient('localhost:27017')  # make server connection
+    db = mongo_client.spambase  # access database
+    collection = db[collection_name]  # access collection
+    result = collection.find()
+    for row in result:
+        dataset.append(row)
+
+    return dataset
 
 
-print 'Reading Dataset'
-data_list = []
-# noinspection SpellCheckingInspection
-with open('spambase.data', 'r') as data_file:
-    read_space_separated(data_file)
+###############################################################################
+# main - starts the program
+###############################################################################
+def main():
+    global attributeList
 
-print len(data_list), 'entries read from dataset'
+    attributeList = read_dataset('names')  # getting attributes from mongodb collection
 
-print 'Retrieving Email List'
-idList = list_messages(service, 'me')
-print 'Email list retrieved'
+    credentials = get_credentials()
+    service = build('gmail', 'v1', http=credentials.authorize(Http()))
 
-emailsList = []
+    print 'Reading dataset'
+    dataset = read_dataset('data')  # reading dataset from mongodb collection
+    print 'Done reading dataset'
 
-columnNames = []
+    print 'Discretising continuous data'
+    dataset_division_dict = dict(
+        (x['name'], []) for x in attributeList)  # {'attribute_name':[q01,q1,,q12,q2,q23,q3,q3max,max_value]}
+    for attribute in attributeList:
+        q01 = 0.0  # mid point of 0 and q1
+        count_q01 = 0  # count of data elements that lies in range
+        q1 = 0.0  # mid point of 0 and mean
+        count_q1 = 0
+        q12 = 0.0  # mid point of q1 and q2
+        count_q12 = 0
+        q2 = 0.0  # mean
+        q23 = 0.0  # mid point of q2 and q3
+        count_q23 = 0
+        q3 = 0
+        count_q3 = 0.0
+        q3max = 0.0  # mid point of q3 and max_value
+        count_q3max = 0
+        max_value = 0.0
 
-with open('spambase.names') as f:
-    for i in f:
-        columnNames.append(i.replace('\n', ''))
+        for data_row in dataset:
+            q2 += data_row[attribute['name']]
+        q2 /= len(dataset)
 
-datasetDivisionDict = dict((x, []) for x in columnNames)  # {'attribute_name':[q1,mean,q3,max_value]}
+        for data_row in dataset:
+            if 0 <= dataset[data_row][attribute] < q2:
+                q1 += data_row[attribute['name']]
+                count_q1 += 1
+        q1 /= count_q1
 
-for i in xrange(0, len(columnNames)):
-    q1 = 0.0
-    count_q1 = 0
-    mean = 0.0
-    q3 = 0
-    count_q3 = 0.0
-    max_value = 0.0
-    for j in xrange(0, len(data_list)):
-        mean += data_list[j][i]
-    mean /= len(data_list)
+        for data_row in dataset:
+            if data_row[attribute['name']] >= q2:
+                q3 += data_row[attribute['name']]
+                count_q3 += 1
+        q3 /= count_q3
 
-    for j in xrange(0, len(data_list)):
-        if 0 <= data_list[j][i] < mean:
-            q1 += data_list[j][i]
-            count_q1 += 1
-    q1 /= count_q1
+        for data_row in dataset:
+            if max_value < data_row[attribute['name']]:
+                max_value = dataset[data_row][attribute]
 
-    for j in xrange(0, len(data_list)):
-        if data_list[j][i] >= mean:
-            q3 += data_list[j][i]
-            count_q3 += 1
-    q3 /= count_q3
+        for data_row in dataset:
+            if 0 <= data_row[attribute['name']] < q1:
+                q01 += data_row[attribute['name']]
+                count_q01 += 1
+        q01 /= count_q01
 
-    for j in xrange(0, len(data_list)):
-        if max_value < data_list[j][i]:
-            max_value = data_list[j][i]
+        for data_row in dataset:
+            if q1 <= data_row[attribute['name']] < q2:
+                q12 += data_row[attribute['name']]
+                count_q12 += 1
+        q12 /= count_q12
 
-    datasetDivisionDict[columnNames[i]] = [q1, mean, q3, max_value]
+        for data_row in dataset:
+            if q2 <= data_row[attribute['name']] < q3:
+                q23 += data_row[attribute['name']]
+                count_q23 += 1
+        q23 /= count_q23
 
-for i in xrange(0, len(data_list)):
-    for j in xrange(0, len(columnNames)):
-        if 0.0 <= data_list[i][j] < datasetDivisionDict[columnNames[j]][0]:
-            data_list[i][j] = 1
-        elif datasetDivisionDict[columnNames[j]][0] <= data_list[i][j] < datasetDivisionDict[columnNames[j]][1]:
-            data_list[i][j] = 2
-        elif datasetDivisionDict[columnNames[j]][1] <= data_list[i][j] < datasetDivisionDict[columnNames[j]][2]:
-            data_list[i][j] = 3
-        elif datasetDivisionDict[columnNames[j]][2] <= data_list[i][j] < datasetDivisionDict[columnNames[j]][3]:
-            data_list[i][j] = 4
+        for data_row in dataset:
+            if q3 <= data_row[attribute['name']] <= max_value:
+                q3max += data_row[attribute['name']]
+                count_q3max += 1
+        q3max /= count_q3max
+
+        dataset_division_dict[attributeList[attribute]] = [q01, q1, q12, q2, q23, q3, q3max, max_value]
+
+    for dataset_index in xrange(len(dataset)):
+        for attribute in attributeList:
+            if 0.0 <= dataset[dataset_index][attribute['name']] < dataset_division_dict[attribute['name']][0]:
+                dataset[dataset_index][attribute['name']] = 1
+            elif dataset_division_dict[attribute['name']][0] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][1]:
+                dataset[dataset_index][attribute] = 2
+            elif dataset_division_dict[attribute['name']][1] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][2]:
+                dataset[dataset_index][attribute] = 3
+            elif dataset_division_dict[attribute['name']][2] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][3]:
+                dataset[dataset_index][attribute] = 4
+            elif dataset_division_dict[attribute['name']][3] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][4]:
+                dataset[dataset_index][attribute] = 5
+            elif dataset_division_dict[attribute['name']][4] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][5]:
+                dataset[dataset_index][attribute] = 6
+            elif dataset_division_dict[attribute['name']][5] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][6]:
+                dataset[dataset_index][attribute] = 7
+            elif dataset_division_dict[attribute['name']][6] <= dataset[dataset_index][attribute['name']] < \
+                    dataset_division_dict[attribute['name']][7]:
+                dataset[dataset_index][attribute] = 8
+            else:
+                dataset[dataset_index][attribute] = 9
+
+    for data_row in dataset:
+        if int(data_row['class']) == 1:
+            data_row['class'] = True
         else:
-            data_list[i][j] = 5
+            data_row['class'] = False
 
-for i in data_list:
-    if int(i[len(data_list[0]) - 1]) == 1:
-        i[len(data_list[0]) - 1] = True
-    else:
-        i[len(data_list[0]) - 1] = False
+    print 'Done discretising'
 
-for j in xrange(0, len(idList)):
-    idDict = idList[j]
-    # print 'Reading email with id', idDict['id']
-    try:
-        msgDict = get_message(service, 'me', idDict['id'])
-        headersList = msgDict['payload']['headers']
-        indexSubject = 0
-        for i in range(0, len(headersList), 1):
-            if headersList[i]['name'] == 'Subject':
-                indexSubject = i
+    print 'Retrieving email list'
+    id_list = list_messages(service, 'me')
+    print 'Done retrieving email list'
 
-        body = ''
-        if 'body' in msgDict['payload'] and msgDict['payload']['mimeType'] == 'text/plain':
-            body += msgDict['payload']['body']['data']
-        elif 'parts' in msgDict['payload'] and msgDict['payload']['parts'][0]['mimeType'] == 'text/plain':
-            body += msgDict['payload']['parts'][0]['body']['data']
-        elif 'parts' in msgDict['payload']['parts'][0] and \
-                        msgDict['payload']['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
-            body += msgDict['payload']['parts'][0]['parts'][0]['body']['data']
-        elif 'parts' in msgDict['payload']['parts'][0]['parts'][0] and \
-                        msgDict['payload']['parts'][0]['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
-            body += msgDict['payload']['parts'][0]['parts'][0]['parts'][0]['body']['data']
-        else:
-            print 'Error in id: ', idDict['id']
+    emails_list = []
 
-        body = str(base64.b64decode(str(body).replace('-', '+').replace('_', '/')))
-        body = body.decode('utf-8')
-        # body = body.replace('\\r\\n', '\\n')
-        # body = body.replace('\\n', '\n')
-        subject = headersList[indexSubject]['value']
-        email = subject + '\t' + body + '\n'
+    for data_row in xrange(len(id_list)):
+        id_dict = id_list[data_row]
+        try:
+            msg_dict = get_message(service, 'me', id_dict['id'])
+            headers_list = msg_dict['payload']['headers']
+            index_subject = 0
+            for attribute in range(0, len(headers_list), 1):
+                if headers_list[attribute]['name'] == 'Subject':
+                    index_subject = attribute
 
-        if len(body) > 0:
-            emailsList.append(email)
-
-        temp = ''
-        for c in email:
-            if c.isalnum() or c.isspace():
-                temp += c
+            body = ''
+            if 'body' in msg_dict['payload'] and msg_dict['payload']['mimeType'] == 'text/plain':
+                body += msg_dict['payload']['body']['data']
+            elif 'parts' in msg_dict['payload'] and msg_dict['payload']['parts'][0]['mimeType'] == 'text/plain':
+                body += msg_dict['payload']['parts'][0]['body']['data']
+            elif 'parts' in msg_dict['payload']['parts'][0] and \
+                            msg_dict['payload']['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
+                body += msg_dict['payload']['parts'][0]['parts'][0]['body']['data']
+            elif 'parts' in msg_dict['payload']['parts'][0]['parts'][0] and \
+                            msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
+                body += msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['body']['data']
             else:
-                temp += ' '
-        total_words = len(temp.split())
-        words = ['make', 'address', 'all', '3d', 'our', 'over', 'remove', 'internet', 'order', 'mail', 'receive',
-                 'will', 'people', 'report', 'addresses', 'free', 'business', 'email', 'you', 'credit', 'your', 'font',
-                 '000', 'money', 'hp', 'hpl', 'george', '650', 'lab', 'labs', 'telnet', '857', 'data', '415', '85',
-                 'technology', '1999', 'parts', 'pm', 'direct', 'cs', 'meeting', 'original', 'project', 're', 'edu',
-                 'table', 'conference']
-        count_words = dict((x, 0) for x in words)
-        for w in re.findall(r"\w+", temp):
-            if w in count_words:
-                count_words[w] += 1
-        total_chars = 0
-        for i in email:
-            if not i == ' ':
-                total_chars += 1
-        chars = [';', '(', '[', '!', '$', '#']
-        count_chars = dict((x, 0) for x in chars)
-        for w in email:
-            if w in count_words:
-                count_chars[w] += 1
-        percent_words = dict((x, 0) for x in words)
-        for k in percent_words.iterkeys():
-            percent_words[k] = 100.0 * float(count_words[k]) / float(total_words)
-        percent_chars = dict((x, 0) for x in chars)
-        for k in percent_chars.iterkeys():
-            percent_chars[k] = 100.0 * float(count_chars[k]) / float(total_chars)
+                print 'Error in id: ', id_dict['id']
 
-        attributeValueList = []
+            body = str(base64.b64decode(str(body).replace('-', '+').replace('_', '/')))
+            body = body.decode('utf-8')
+            # body = body.replace('\\r\\n', '\\n')
+            # body = body.replace('\\n', '\n')
+            subject = headers_list[index_subject]['value']
+            email = subject + '\t' + body + '\n'
 
-        for i in xrange(0, len(words)):
-            attributeValueList.append(percent_words[words[i]])
+            if len(body) > 0:
+                emails_list.append(email)
 
-        for i in xrange(0, len(chars)):
-            attributeValueList.append(percent_chars[chars[i]])
+            temp = ''
+            for c in email:
+                if c.isalnum() or c.isspace():
+                    temp += c
+                else:
+                    temp += ' '
+            total_words = len(temp.split())
+            words = ['make', 'address', 'all', '3d', 'our', 'over', 'remove', 'internet', 'order', 'mail', 'receive',
+                     'will', 'people', 'report', 'addresses', 'free', 'business', 'email', 'you', 'credit', 'your',
+                     'font',
+                     '000', 'money', 'hp', 'hpl', 'george', '650', 'lab', 'labs', 'telnet', '857', 'data', '415', '85',
+                     'technology', '1999', 'parts', 'pm', 'direct', 'cs', 'meeting', 'original', 'project', 're', 'edu',
+                     'table', 'conference']
+            count_words = dict((x, 0) for x in words)
+            for w in re.findall(r"\w+", temp):
+                if w in count_words:
+                    count_words[w] += 1
+            total_chars = 0
+            for attribute in email:
+                if not attribute == ' ':
+                    total_chars += 1
+            chars = [';', '(', '[', '!', '$', '#']
+            count_chars = dict((x, 0) for x in chars)
+            for w in email:
+                if w in count_words:
+                    count_chars[w] += 1
+            percent_words = dict((x, 0) for x in words)
+            for k in percent_words.iterkeys():
+                percent_words[k] = 100.0 * float(count_words[k]) / float(total_words)
+            percent_chars = dict((x, 0) for x in chars)
+            for k in percent_chars.iterkeys():
+                percent_chars[k] = 100.0 * float(count_chars[k]) / float(total_chars)
 
-        for i in xrange(0, len(columnNames)):
-            if 0.0 <= attributeValueList[i] < datasetDivisionDict[columnNames[i]][0]:
-                attributeValueList[i] = 1
-            elif datasetDivisionDict[columnNames[i]][0] <= attributeValueList[i] < \
-                    datasetDivisionDict[columnNames[i]][1]:
-                attributeValueList[i] = 2
-            elif datasetDivisionDict[columnNames[i]][1] <= attributeValueList[i] < \
-                    datasetDivisionDict[columnNames[i]][2]:
-                attributeValueList[i] = 3
-            elif datasetDivisionDict[columnNames[i]][2] <= attributeValueList[i] < \
-                    datasetDivisionDict[columnNames[i]][3]:
-                attributeValueList[i] = 4
-            else:
-                attributeValueList[i] = 5
+            attribute_value_list = []
 
-        probability_true = 1.0
-        probability_false = 1.0
-        prob_true = []
-        prob_false = []
-        count_true = 0.0
-        count_false = 0.0
-        total = float(len(data_list))
+            for attribute in xrange(0, len(words)):
+                attribute_value_list.append(percent_words[words[attribute]])
 
-        for i in data_list:
-            if i[-1]:
-                count_true += 1
-            else:
-                count_false += 1
+            for attribute in xrange(0, len(chars)):
+                attribute_value_list.append(percent_chars[chars[attribute]])
 
-        for i in xrange(0, len(data_list[0]) - 1):
-            count = 0.0
-            for k in data_list:
-                if k[i] == attributeValueList[i] and k[-1]:
-                    count += 1
-            probability = count / count_true
-            prob_true.append(probability)
+            for attribute in xrange(0, len(attributeList)):
+                if 0.0 <= attribute_value_list[attribute] < dataset_division_dict[attributeList[attribute]][0]:
+                    attribute_value_list[attribute] = 1
+                elif dataset_division_dict[attributeList[attribute]][0] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]][1]:
+                    attribute_value_list[attribute] = 2
+                elif dataset_division_dict[attributeList[attribute]][1] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]][2]:
+                    attribute_value_list[attribute] = 3
+                elif dataset_division_dict[attributeList[attribute]][2] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]][3]:
+                    attribute_value_list[attribute] = 4
+                else:
+                    attribute_value_list[attribute] = 5
 
-        prob_true.append(count_true / total)
+            probability_true = 1.0
+            probability_false = 1.0
+            prob_true = []
+            prob_false = []
+            count_true = 0.0
+            count_false = 0.0
+            total = float(len(dataset))
 
-        for i in xrange(0, len(data_list[0]) - 1):
-            count = 0.0
-            for k in data_list:
-                if k[i] == attributeValueList[i] and not k[-1]:
-                    count += 1
-            probability = count / count_false
-            prob_false.append(probability)
+            for attribute in dataset:
+                if attribute[-1]:
+                    count_true += 1
+                else:
+                    count_false += 1
 
-        prob_false.append(count_false / total)
+            for attribute in xrange(0, len(dataset[0]) - 1):
+                count = 0.0
+                for k in dataset:
+                    if k[attribute] == attribute_value_list[attribute] and k[-1]:
+                        count += 1
+                probability = count / count_true
+                prob_true.append(probability)
 
-        for i in prob_true:
-            probability_true *= i
+            prob_true.append(count_true / total)
 
-        for i in prob_false:
-            probability_false *= i
+            for attribute in xrange(0, len(dataset[0]) - 1):
+                count = 0.0
+                for k in dataset:
+                    if k[attribute] == attribute_value_list[attribute] and not k[-1]:
+                        count += 1
+                probability = count / count_false
+                prob_false.append(probability)
 
-        if probability_true > probability_false:
-            print idDict['id'], 'spam'
-        elif probability_true == probability_false:
-            random_no = randint(0, 1)
-            if random_no == 1:
-                print idDict['id'], 'spam'
+            prob_false.append(count_false / total)
 
-    except Exception as e:
-        print 'Error in id %s' % idList[j]['id']
-        print 'Error Description: ', e
-        pass
+            for attribute in prob_true:
+                probability_true *= attribute
+
+            for attribute in prob_false:
+                probability_false *= attribute
+
+            if probability_true > probability_false:
+                print id_dict['id'], 'spam'
+            elif probability_true == probability_false:
+                random_no = randint(0, 1)
+                if random_no == 1:
+                    print id_dict['id'], 'spam'
+
+        except Exception as e:
+            print 'Error in id %s' % id_list[data_row]['id']
+            print 'Error Description: ', e
+            pass
+
+
+main()
