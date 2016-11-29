@@ -181,7 +181,7 @@ def main():
         q2 /= len(dataset)
 
         for data_row in dataset:
-            if 0 <= dataset[data_row][attribute] < q2:
+            if 0 <= data_row[attribute['name']] < q2:
                 q1 += data_row[attribute['name']]
                 count_q1 += 1
         q1 /= count_q1
@@ -194,33 +194,37 @@ def main():
 
         for data_row in dataset:
             if max_value < data_row[attribute['name']]:
-                max_value = dataset[data_row][attribute]
+                max_value = data_row[attribute['name']]
 
         for data_row in dataset:
             if 0 <= data_row[attribute['name']] < q1:
                 q01 += data_row[attribute['name']]
                 count_q01 += 1
-        q01 /= count_q01
+        if count_q01 != 0:
+            q01 /= count_q01
 
         for data_row in dataset:
             if q1 <= data_row[attribute['name']] < q2:
                 q12 += data_row[attribute['name']]
                 count_q12 += 1
-        q12 /= count_q12
+        if count_q12 != 0:
+            q12 /= count_q12
 
         for data_row in dataset:
             if q2 <= data_row[attribute['name']] < q3:
                 q23 += data_row[attribute['name']]
                 count_q23 += 1
-        q23 /= count_q23
+        if count_q23 != 0:
+            q23 /= count_q23
 
         for data_row in dataset:
             if q3 <= data_row[attribute['name']] <= max_value:
                 q3max += data_row[attribute['name']]
                 count_q3max += 1
-        q3max /= count_q3max
+        if count_q3max != 0:
+            q3max /= count_q3max
 
-        dataset_division_dict[attributeList[attribute]] = [q01, q1, q12, q2, q23, q3, q3max, max_value]
+        dataset_division_dict[attribute['name']] = [q01, q1, q12, q2, q23, q3, q3max, max_value]
 
     for dataset_index in xrange(len(dataset)):
         for attribute in attributeList:
