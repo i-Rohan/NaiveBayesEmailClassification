@@ -3,6 +3,7 @@ import os
 import re
 import warnings
 
+import html2text
 import numpy
 import oauth2client
 from apiclient import errors
@@ -82,16 +83,16 @@ def get_credentials():
 ###############################################################################
 def list_messages(service1, user_id):
     try:
-        response = service1.users().messages().list(userId=user_id, maxResults=10, includeSpamTrash=True).execute()
+        response = service1.users().messages().list(userId=user_id, maxResults=500, includeSpamTrash=True).execute()
         messages = []
         if 'messages' in response:
             messages.extend(response['messages'])
 
-        # while 'nextPageToken' in response:
-        #     page_token = response['nextPageToken']
-        #     response = service.users().messages().list(userId=user_id, pageToken=page_token, maxResults=500,
-        #                                                includeSpamTrash=True).execute()
-        #     messages.extend(response['messages'])
+        while 'nextPageToken' in response:
+            page_token = response['nextPageToken']
+            response = service1.users().messages().list(userId=user_id, pageToken=page_token, maxResults=500,
+                                                        includeSpamTrash=True).execute()
+            messages.extend(response['messages'])
 
         return messages
     except errors.HttpError as error1:
@@ -133,7 +134,7 @@ def get_message(service1, user_id, msg_id):
 def read_dataset(collection_name):
     dataset = []
 
-    mongo_client = MongoClient('localhost:27017')  # make server connection
+    mongo_client = MongoClient('10.7.2.4:27017')  # make server connection
     db = mongo_client.spambase  # access database
     collection = db[collection_name]  # access collection
     result = collection.find()
@@ -268,171 +269,139 @@ def main():
 
     print 'Retrieving email list'
     id_list = list_messages(service, 'me')
-    print 'Done retrieving email list'
-
-    emails_list = []
+    print 'Done retrieving email list\n'
 
     for data_row in xrange(len(id_list)):
         id_dict = id_list[data_row]
-        # try:
-        msg_dict = get_message(service, 'me', id_dict['id'])
-        headers_list = msg_dict['payload']['headers']
-        index_subject = 0
-        for attribute in range(0, len(headers_list), 1):
-            if headers_list[attribute]['name'] == 'Subject':
-                index_subject = attribute
+        try:
+            msg_dict = get_message(service, 'me', id_dict['id'])
+            headers_list = msg_dict['payload']['headers']
+            index_subject = 0
+            for j in range(0, len(headers_list), 1):
+                if headers_list[j]['name'] == 'Subject':
+                    index_subject = j
 
-        body = ''
-        if 'body' in msg_dict['payload'] and msg_dict['payload']['mimeType'] == 'text/plain':
-            body += msg_dict['payload']['body']['data']
-        elif 'parts' in msg_dict['payload'] and msg_dict['payload']['parts'][0]['mimeType'] == 'text/plain':
-            body += msg_dict['payload']['parts'][0]['body']['data']
-        elif 'parts' in msg_dict['payload']['parts'][0] and \
-                        msg_dict['payload']['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
-            body += msg_dict['payload']['parts'][0]['parts'][0]['body']['data']
-        elif 'parts' in msg_dict['payload']['parts'][0]['parts'][0] and \
-                        msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
-            body += msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['body']['data']
-        else:
-            print 'Error in id: ', id_dict['id']
-
-        body = str(base64.b64decode(str(body).replace('-', '+').replace('_', '/')))
-        body = body.decode('utf-8')
-        # body = body.replace('\\r\\n', '\\n')
-        # body = body.replace('\\n', '\n')
-        subject = headers_list[index_subject]['value']
-        email = subject + ' ' + body
-
-        if len(body) > 0:
-            emails_list.append(email)
-
-        temp = ''
-        for c in email:
-            if c.isalnum() or c.isspace():
-                temp += c
+            body = ''
+            html = False
+            if 'body' in msg_dict['payload']:
+                if msg_dict['payload']['mimeType'] == 'text/plain':
+                    body += msg_dict['payload']['body']['data']
+                elif msg_dict['payload']['mimeType'] == 'text/html':
+                    body += msg_dict['payload']['body']['data']
+                    html = True
+            elif 'parts' in msg_dict['payload']:
+                if msg_dict['payload']['parts'][0]['mimeType'] == 'text/plain':
+                    body += msg_dict['payload']['parts'][0]['body']['data']
+                elif msg_dict['payload']['parts'][0]['mimeType'] == 'text/html':
+                    body += msg_dict['payload']['parts'][0]['body']['data']
+                    html = True
+            elif 'parts' in msg_dict['payload']['parts'][0]:
+                if msg_dict['payload']['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
+                    body += msg_dict['payload']['parts'][0]['parts'][0]['body']['data']
+                elif msg_dict['payload']['parts'][0]['parts'][0]['mimeType'] == 'text/html':
+                    body += msg_dict['payload']['parts'][0]['parts'][0]['body']['data']
+                    html = True
+            elif 'parts' in msg_dict['payload']['parts'][0]['parts'][0]:
+                if msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['mimeType'] == 'text/plain':
+                    body += msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['body']['data']
+                elif msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['mimeType'] == 'text/html':
+                    body += msg_dict['payload']['parts'][0]['parts'][0]['parts'][0]['body']['data']
+                    html = True
             else:
-                temp += ' '
-        total_words = len(temp.split())
-        words = ['make', 'address', 'all', '3d', 'our', 'over', 'remove', 'internet', 'order', 'mail', 'receive',
-                 'will', 'people', 'report', 'addresses', 'free', 'business', 'email', 'you', 'credit', 'your',
-                 'font',
-                 '000', 'money', 'hp', 'hpl', 'george', '650', 'lab', 'labs', 'telnet', '857', 'data', '415', '85',
-                 'technology', '1999', 'parts', 'pm', 'direct', 'cs', 'meeting', 'original', 'project', 're', 'edu',
-                 'table', 'conference']
-        count_words = dict((x, 0) for x in words)
-        for w in re.findall(r"\w+", temp):
-            if w in count_words:
-                count_words[w] += 1
-        total_chars = 0
-        for attribute in email:
-            if not attribute == ' ':
-                total_chars += 1
-        chars = [';', '(', '[', '!', '$', '#']
-        count_chars = dict((x, 0) for x in chars)
-        for w in email:
-            if w in count_words:
-                count_chars[w] += 1
-        percent_words = dict((x, 0) for x in words)
-        for k in percent_words.iterkeys():
-            percent_words[k] = 100.0 * float(count_words[k]) / float(total_words)
-        percent_chars = dict((x, 0) for x in chars)
-        for k in percent_chars.iterkeys():
-            percent_chars[k] = 100.0 * float(count_chars[k]) / float(total_chars)
+                print 'Error in reading email with id', id_dict['id']
 
-        attribute_value_list = []
+            body = str(base64.b64decode(str(body).replace('-', '+').replace('_', '/')))
+            body = body.decode('utf-8')
+            # body = body.replace('\\r\\n', '\\n')
+            # body = body.replace('\\n', '\n')
+            if html:
+                body = html2text.html2text(body)
+            subject = headers_list[index_subject]['value']
+            email = subject + ' ' + body
 
-        for attribute in xrange(len(words)):
-            attribute_value_list.append(percent_words[words[attribute]])
+            temp = ''
+            for c in email:
+                if c.isalnum() or c.isspace():
+                    temp += c
+                else:
+                    temp += ' '
+            temp = temp.lower()
+            total_words = len(temp.split())
+            words = ['make', 'address', 'all', '3d', 'our', 'over', 'remove', 'internet', 'order', 'mail', 'receive',
+                     'will', 'people', 'report', 'addresses', 'free', 'business', 'email', 'you', 'credit', 'your',
+                     'font', '000', 'money', 'hp', 'hpl', 'george', '650', 'lab', 'labs', 'telnet', '857', 'data',
+                     '415',
+                     '85', 'technology', '1999', 'parts', 'pm', 'direct', 'cs', 'meeting', 'original', 'project', 're',
+                     'edu', 'table', 'conference']
+            count_words = dict((x, 0) for x in words)
+            for w in re.findall(r"\w+", temp):
+                if w in count_words:
+                    count_words[w] += 1
+            total_chars = 0
+            for attribute in email:
+                if not attribute == ' ':
+                    total_chars += 1
+            chars = [';', '(', '[', '!', '$', '#']
+            count_chars = dict((x, 0) for x in chars)
+            for w in email:
+                if w in count_words:
+                    count_chars[w] += 1
+            percent_words = dict((x, 0) for x in words)
+            for k in percent_words.iterkeys():
+                percent_words[k] = 100.0 * float(count_words[k]) / float(total_words)
+            percent_chars = dict((x, 0) for x in chars)
+            for k in percent_chars.iterkeys():
+                percent_chars[k] = 100.0 * float(count_chars[k]) / float(total_chars)
 
-        for attribute in xrange(len(chars)):
-            attribute_value_list.append(percent_chars[chars[attribute]])
+            attribute_value_list = []
 
-        for attribute in xrange(len(attributeList) - 1):
-            if 0.0 <= attribute_value_list[attribute] < dataset_division_dict[attributeList[attribute]['name']][0]:
-                attribute_value_list[attribute] = 1
-            elif dataset_division_dict[attributeList[attribute]['name']][0] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][1]:
-                attribute_value_list[attribute] = 2
-            elif dataset_division_dict[attributeList[attribute]['name']][1] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][2]:
-                attribute_value_list[attribute] = 3
-            elif dataset_division_dict[attributeList[attribute]['name']][2] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][3]:
-                attribute_value_list[attribute] = 4
-            elif dataset_division_dict[attributeList[attribute]['name']][3] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][4]:
-                attribute_value_list[attribute] = 5
-            elif dataset_division_dict[attributeList[attribute]['name']][4] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][5]:
-                attribute_value_list[attribute] = 6
-            elif dataset_division_dict[attributeList[attribute]['name']][5] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][6]:
-                attribute_value_list[attribute] = 7
-            elif dataset_division_dict[attributeList[attribute]['name']][6] <= attribute_value_list[attribute] < \
-                    dataset_division_dict[attributeList[attribute]['name']][7]:
-                attribute_value_list[attribute] = 8
-            else:
-                attribute_value_list[attribute] = 9
+            for attribute in xrange(len(words)):
+                attribute_value_list.append(percent_words[words[attribute]])
 
-        print attribute_value_list
-        from sklearn.naive_bayes import MultinomialNB
-        classifier = MultinomialNB()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            classifier.fit(X, Y)
-        print classifier.predict(attribute_value_list)
+            for attribute in xrange(len(chars)):
+                attribute_value_list.append(percent_chars[chars[attribute]])
 
-        # probability_true = 1.0
-        # probability_false = 1.0
-        # prob_true = []
-        # prob_false = []
-        # count_true = 0.0
-        # count_false = 0.0
-        # total = float(len(dataset))
-        #
-        # for attribute in dataset:
-        #     if attribute[-1]:
-        #         count_true += 1
-        #     else:
-        #         count_false += 1
-        #
-        # for attribute in xrange(0, len(dataset[0]) - 1):
-        #     count = 0.0
-        #     for k in dataset:
-        #         if k[attribute] == attribute_value_list[attribute] and k[-1]:
-        #             count += 1
-        #     probability = count / count_true
-        #     prob_true.append(probability)
-        #
-        # prob_true.append(count_true / total)
-        #
-        # for i in xrange(len(dataset[0]) - 1):
-        #     count = 0.0
-        #     for k in dataset:
-        #         if k[i] == attribute_value_list[i] and not k[-1]:
-        #             count += 1
-        #     probability = count / count_false
-        #     prob_false.append(probability)
-        #
-        # prob_false.append(count_false / total)
-        #
-        # for attribute in prob_true:
-        #     probability_true *= attribute
-        #
-        # for attribute in prob_false:
-        #     probability_false *= attribute
-        #
-        # if probability_true > probability_false:
-        #     print id_dict['id'], 'spam'
-        # elif probability_true == probability_false:
-        #     random_no = randint(0, 1)
-        #     if random_no == 1:
-        #         print id_dict['id'], 'spam'
+            for attribute in xrange(len(attributeList) - 1):
+                if 0.0 <= attribute_value_list[attribute] < dataset_division_dict[attributeList[attribute]['name']][0]:
+                    attribute_value_list[attribute] = 1
+                elif dataset_division_dict[attributeList[attribute]['name']][0] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][1]:
+                    attribute_value_list[attribute] = 2
+                elif dataset_division_dict[attributeList[attribute]['name']][1] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][2]:
+                    attribute_value_list[attribute] = 3
+                elif dataset_division_dict[attributeList[attribute]['name']][2] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][3]:
+                    attribute_value_list[attribute] = 4
+                elif dataset_division_dict[attributeList[attribute]['name']][3] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][4]:
+                    attribute_value_list[attribute] = 5
+                elif dataset_division_dict[attributeList[attribute]['name']][4] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][5]:
+                    attribute_value_list[attribute] = 6
+                elif dataset_division_dict[attributeList[attribute]['name']][5] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][6]:
+                    attribute_value_list[attribute] = 7
+                elif dataset_division_dict[attributeList[attribute]['name']][6] <= attribute_value_list[attribute] < \
+                        dataset_division_dict[attributeList[attribute]['name']][7]:
+                    attribute_value_list[attribute] = 8
+                else:
+                    attribute_value_list[attribute] = 9
 
-        # except Exception as e:
-        #     print 'Error in id %s' % id_list[data_row]['id']
-        #     print 'Error Description: ', e
-        #     pass
+            from sklearn.naive_bayes import MultinomialNB
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                classifier = MultinomialNB()
+                classifier.fit(X, Y)
+                prediction = classifier.predict(attribute_value_list)[0]
+                if prediction == 1:
+                    print id_dict['id'], 'is spam'
+
+        except Exception as e:
+            print 'Error in id %s' % id_list[data_row]['id']
+            print 'Error Description: ', e
+            pass
 
 
 main()
