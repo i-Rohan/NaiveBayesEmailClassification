@@ -14,7 +14,7 @@ label.pack(fill ="x")
 
 
 list = [x*5 for x in range(0,1000000,1)]
-l1 = Listbox()
+l1 = Listbox(root,height ="500",width ="500")
 for i in list:
     l1.insert( END ,i)
 l1.pack()
