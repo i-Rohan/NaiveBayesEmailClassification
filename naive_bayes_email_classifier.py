@@ -59,9 +59,7 @@ def get_credentials():
         flow.user_agent = APPLICATION_NAME
         if flags:
             credentials1 = tools.run_flow(flow, store, flags)
-        else:  # Needed only for compatability with Python 2.6
-            credentials1 = tools.run(flow, store)
-        print 'Storing credentials to ' + credential_path
+        print 'Storing credentials to', credential_path, '\n'
     return credentials1
 
 
@@ -150,16 +148,20 @@ def read_dataset(collection_name):
 def main():
     global attributeList
 
-    attributeList = read_dataset('names')  # getting attributes from mongodb collection
-
+    print 'Initializing gmail API'
     credentials = get_credentials()
     service = build('gmail', 'v1', http=credentials.authorize(Http()))
+    print 'Done initializing gmail API\n'
+
+    print 'Reading attribute list'
+    attributeList = read_dataset('names')  # getting attributes from mongodb collection
+    print 'Done reading attribute list\n'
 
     print 'Reading dataset'
     dataset = read_dataset('data')  # reading dataset from mongodb collection
     print 'Done reading dataset\n'
 
-    print 'Discretising continuous data'
+    print 'Discretizing continuous data'
     dataset_division_dict = dict(
         (x['name'], []) for x in attributeList)  # {'attribute_name':[q01,q1,,q12,q2,q23,q3,q3max,max_value]}
     for attribute in attributeList:
@@ -265,7 +267,7 @@ def main():
     for i in xrange(len(dataset)):
         Y[i][0] = dataset[i][attributeList[-1]['name']]  # adding class value from dataset to Y
 
-    print 'Done discretising\n'
+    print 'Done discretizing\n'
 
     print 'Retrieving email list'
     id_list = list_messages(service, 'me')
@@ -276,10 +278,14 @@ def main():
         try:
             msg_dict = get_message(service, 'me', id_dict['id'])
             headers_list = msg_dict['payload']['headers']
-            index_subject = 0
-            for j in range(0, len(headers_list), 1):
-                if headers_list[j]['name'] == 'Subject':
-                    index_subject = j
+            subject = ''
+            for j in headers_list:
+                if j['name'] == 'Subject':
+                    subject += j['value']
+            sender = None
+            for j in headers_list:
+                if j['name'] == 'From':
+                    sender = j['value']
 
             body = ''
             html = False
@@ -316,7 +322,6 @@ def main():
             # body = body.replace('\\n', '\n')
             if html:
                 body = html2text.html2text(body)
-            subject = headers_list[index_subject]['value']
             email = subject + ' ' + body
 
             temp = ''
@@ -396,11 +401,19 @@ def main():
                 classifier.fit(X, Y)
                 prediction = classifier.predict(attribute_value_list)[0]
                 if prediction == 1:
-                    print id_dict['id'], 'is spam'
+                    mongo_client = MongoClient('localhost:27017')
+                    db = mongo_client.spambase
+                    collection = db.spam
+                    spammer_dict = {'spammer': sender}
+                    if sender is not None:
+                        collection.insert(spammer_dict)
+                        print 'Email with id', id_dict['id'], 'is spam, sender is', sender
+                        # else:
+                        #     print 'Email with id', id_dict['id'], 'is NOT spam'
 
         except Exception as e:
-            print 'Error in id %s' % id_list[data_row]['id']
-            print 'Error Description: ', e
+            # print 'Error in id %s' % id_list[data_row]['id']
+            # print 'Error Description: ', e
             pass
 
 
