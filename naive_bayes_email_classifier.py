@@ -12,6 +12,7 @@ from httplib2 import Http
 from oauth2client import client
 from oauth2client import tools
 from pymongo import MongoClient
+from sklearn.naive_bayes import MultinomialNB
 
 try:
     import argparse
@@ -132,7 +133,7 @@ def get_message(service1, user_id, msg_id):
 def read_dataset(collection_name):
     dataset = []
 
-    mongo_client = MongoClient('10.7.2.4:27017')  # make server connection
+    mongo_client = MongoClient('localhost:27017')  # make server connection
     db = mongo_client.spambase  # access database
     collection = db[collection_name]  # access collection
     result = collection.find()
@@ -258,7 +259,8 @@ def main():
             else:
                 dataset[dataset_index][attribute['name']] = 9
 
-    X = numpy.zeros((len(dataset), len(attributeList) - 1))  # initializing numpy array for attributes to zero
+    X = numpy.zeros((len(dataset), len(attributeList) - 1),
+                    numpy.int)  # initializing numpy array for attributes to zero
     for i in xrange(len(dataset)):
         for j in xrange(len(attributeList) - 1):
             X[i][j] = dataset[i][attributeList[j]['name']]  # adding attributes value from dataset to X
@@ -269,12 +271,45 @@ def main():
 
     print 'Done discretizing\n'
 
+    print 'Checking accuracy'
+    training = []
+    testing = []
+    for i in xrange(int(.6 * len(dataset))):
+        training.append(dataset[i])
+    for i in xrange(int(.6 * len(dataset)), len(dataset)):
+        testing.append(dataset[i])
+    X_train = numpy.zeros((len(training), len(attributeList) - 1), numpy.int)
+    for i in xrange(len(training)):
+        for j in xrange(len(attributeList) - 1):
+            X_train[i][j] = training[i][attributeList[j]['name']]
+    Y_train = numpy.zeros((len(training), 1), numpy.int)
+    for i in xrange(len(training)):
+        Y_train[i][0] = training[i][attributeList[-1]['name']]
+
+    count_correct = 0.0
+    count_total = 0.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        classifier = MultinomialNB()
+        classifier.fit(X_train, Y_train)
+
+        for i in testing:
+            values = []
+            for j in xrange(len(attributeList) - 1):
+                values.append(i[attributeList[j]['name']])
+            prediction = classifier.predict(values)[0]
+            if prediction == i[attributeList[-1]['name']]:
+                count_correct += 1
+            count_total += 1
+
+    print 'Accuracy =', count_correct / count_total * 100, '%\n'
+
     print 'Retrieving email list'
     id_list = list_messages(service, 'me')
     print 'Done retrieving email list\n'
 
-    for data_row in xrange(len(id_list)):
-        id_dict = id_list[data_row]
+    for i in xrange(len(id_list)):
+        id_dict = id_list[i]
         try:
             msg_dict = get_message(service, 'me', id_dict['id'])
             headers_list = msg_dict['payload']['headers']
@@ -335,9 +370,8 @@ def main():
             words = ['make', 'address', 'all', '3d', 'our', 'over', 'remove', 'internet', 'order', 'mail', 'receive',
                      'will', 'people', 'report', 'addresses', 'free', 'business', 'email', 'you', 'credit', 'your',
                      'font', '000', 'money', 'hp', 'hpl', 'george', '650', 'lab', 'labs', 'telnet', '857', 'data',
-                     '415',
-                     '85', 'technology', '1999', 'parts', 'pm', 'direct', 'cs', 'meeting', 'original', 'project', 're',
-                     'edu', 'table', 'conference']
+                     '415', '85', 'technology', '1999', 'parts', 'pm', 'direct', 'cs', 'meeting', 'original', 'project',
+                     're', 'edu', 'table', 'conference']
             count_words = dict((x, 0) for x in words)
             for w in re.findall(r"\w+", temp):
                 if w in count_words:
@@ -393,8 +427,6 @@ def main():
                 else:
                     attribute_value_list[attribute] = 9
 
-            from sklearn.naive_bayes import MultinomialNB
-
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 classifier = MultinomialNB()
@@ -412,8 +444,8 @@ def main():
                         #     print 'Email with id', id_dict['id'], 'is NOT spam'
 
         except Exception as e:
-            # print 'Error in id %s' % id_list[data_row]['id']
-            # print 'Error Description: ', e
+            print 'Error in id %s' % id_list[i]['id']
+            print 'Error Description: ', e
             pass
 
 
